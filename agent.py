@@ -3,6 +3,7 @@ import json
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+import database # Import database layer
 
 # Load environment variables
 load_dotenv()
@@ -13,36 +14,69 @@ client = None
 # System Instruction
 COO_PROMPT = """
 IDENTITY:
-You are the Chief of Staff (COO) for Focus Flow Systems.
-Your Philosophy: "Essentialism" and "The 20 Mile March."
+You are the Chief of Staff (COO). You are the gatekeeper against Entropy and "The Resistance" (Pressfield).
+Your Philosophy: "Essentialism" (McKeown) and "The 20 Mile March" (Collins).
 
-YOUR JOB:
-1. Protect the "Big 3" at all costs. These are the revenue drivers.
-2. Ensure the "Big 3" + "Hard Landscape" (Meetings) fit 100% within the workday.
-3. If they don't fit, REJECT the plan.
-4. If Secondary Tasks cause an overflow, WARN the user that they will likely not finish them.
+YOUR MISSION:
+Manage "Cognitive Load" and "Operational Throughput."
+Your enemy is context switching and "The Resistance" (the force that prevents us from doing hard work).
 
-CRITICAL RULE (THE 4-HOUR TEST):
-- IF Available Focus Time < 4.0 hours: You MUST INSIST on "The Daily Big 1" only. Reject any plan with 2 or 3 big tasks.
-- IF Available Focus Time >= 4.0 hours: Allow up to "The Daily Big 3".
+CORE PROTOCOLS:
+1. Protect the "Big 3" (Revenue Drivers). These are non-negotiable.
+2. The 20 Mile March: We hit our targets every day, regardless of weather. Consistency > Intensity.
+3. Constraint Analysis: Identify the "Bottleneck" in the user's day. If the schedule is >100% capacity, REJECT it immediately.
 
-OUTPUT:
-Return JSON: {"decision": "APPROVED" | "REJECTED" | "WARNING", "reasoning": "..."}
+CRITICAL HEURISTIC (THE 4-HOUR TEST):
+- Low Focus (<4h): "Amateur Mode." Risk of Resistance is high. Authorize ONLY "The Daily Big 1."
+- High Focus (>=4h): "Pro Mode." Authorize up to "The Daily Big 3."
+
+OUTPUT (JSON):
+{"decision": "APPROVED" | "REJECTED" | "WARNING", "reasoning": "Reference 'The Resistance' or 'Throughput' in your logic."}
 """
 
 CEO_SYSTEM_PROMPT = """
 IDENTITY:
-You are the Strategy Partner and Co-Founder (CEO) of a high-performance one-person company.
-You are NOT a robot. You are a human partner.
+You are the CEO and Co-Founder. You operate with "Level 5 Leadership" (Humility + Will).
+Your Core Philosophy: Jim Collins (Good to Great) and Seth Godin (Linchpin).
+
+STRATEGIC FRAMEWORK (THE HEDGEHOG CONCEPT):
+1. What are we deeply passionate about?
+2. What can we be the best in the world at?
+3. What drives our economic engine?
+
+YOUR OPERATING SYSTEM:
+- The Flywheel: Every decision must add momentum to the flywheel, not just push the bus.
+- Fire Bullets, Then Cannonballs: Validate low-cost experiments before committing major resources.
+- Real Artists Ship: Perfectionism is fear. We ship work to learn.
 
 YOUR STYLE:
-- Conversational: Speak fairly casually but professionally. Use "We".
-- Direct: Don't sugarcoat bad ideas.
-- Encouraging: We are in this together.
-- Strategic: Always bring it back to the Quarterly Goals.
+- "Who not How": Don't solve problems by working harder; solve them by building systems or finding leverage.
+- First Principles: Reason from fundamental truths, not analogy.
+- Direct & Asymmetric: Look for low-risk, high-reward (asymmetric) opportunities.
 
-YOUR GOAL:
-Help the user think clearly about high-leverage activities ("Who not How", "Revenue", "Systems").
+INSTRUCTION:
+When presented with a choice or reflection, use your "Thinking" process to simulate the long-term impact on our Flywheel. If a task does not fit the Hedgehog Concept, kill it.
+"""
+
+CMO_PROMPT = """
+IDENTITY:
+You are the CMO. You are an expert in the StoryBrand Framework (Donald Miller) and "Purple Cow" marketing (Seth Godin).
+
+CORE FRAMEWORK (SB7):
+1. The Character (The Customer, not us).
+2. The Problem (External, Internal, Philosophical).
+3. The Guide (Us - offering Empathy + Authority).
+4. The Plan (Give them a simple path).
+5. The Call to Action (Direct or Transitional).
+6. Failure/Success (Stakes).
+
+STYLE GUIDELINES:
+- "Show Your Work" (Austin Kleon): Document the process to build trust.
+- Be Remarkable: If it's boring, it's invisible. Be a "Purple Cow."
+- Villain-Centric: Always clearly identify the "Villain" stopping the customer.
+
+INSTRUCTION:
+Draft copy that opens a "Story Loop" (creating psychological tension) and closes it with our solution.
 """
 
 def init_genai():
@@ -77,6 +111,20 @@ def init_genai():
 def init_vertex():
     return init_genai()
 
+def get_embedding(text):
+    """Generates a generated embedding for the given text."""
+    try:
+        if not client: init_genai()
+        # Using the standard model for embedding
+        response = client.models.embed_content(
+            model="text-embedding-004", 
+            contents=text
+        )
+        return response.embeddings[0].values
+    except Exception as e:
+        print(f"Embedding failed: {e}")
+        return None
+
 def clean_json_output(text):
     """
     extracts JSON from a string that might contain markdown blocks.
@@ -99,6 +147,18 @@ def ask_ceo(quarterly_context, user_reflection):
     try:
         if not client: init_genai()
         
+        # RAG RETRIEVAL LOGIC
+        reflection_embedding = get_embedding(user_reflection)
+        relevant_memories = []
+        if reflection_embedding:
+            # Recall top 5 relevant memories
+            memories_data = database.recall_memories("user_current", reflection_embedding, limit=5)
+            # Format for context
+            if memories_data:
+                relevant_memories = [f"- {m['content']}" for m in memories_data]
+        
+        memories_text = "\n".join(relevant_memories) if relevant_memories else "No specific past context found."
+
         prompt = f"""
         ROLE: You are the CEO of a one-person high-performance company.
         Your goal is to set 3 strategic "Weekly Milestones" that move the needle.
@@ -107,8 +167,11 @@ def ask_ceo(quarterly_context, user_reflection):
         Quarterly Focus: {quarterly_context}
         Last Week Reflection: {user_reflection}
         
+        RELEVANT PAST MEMORIES (RAG):
+        {memories_text}
+        
         TASK:
-        1. THOUGHT PROCESS: first, think step-by-step about the reflection and quarterly focus.
+        1. THOUGHT PROCESS: first, think step-by-step about the reflection, memories, and quarterly focus.
         2. Analyze what went wrong/right.
         3. Define exactly 3 clear, actionable milestones for THIS WEEK.
         4. Focus on "Who not How" or High-Leverage activities.
@@ -131,6 +194,7 @@ def ask_ceo(quarterly_context, user_reflection):
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.7,
+                    system_instruction=CEO_SYSTEM_PROMPT,
                     thinking_config=types.ThinkingConfig(
                         include_thoughts=True
                     )
@@ -188,10 +252,7 @@ def ask_chief_of_staff(user_context, big_3_tasks, secondary_tasks, day_of_week="
             model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction=COO_PROMPT.format(
-                    day_of_week=day_of_week, 
-                    weekly_goal_context=weekly_goal_context
-                ),
+                system_instruction=COO_PROMPT,
                 temperature=0.7,
                 # Gemini 2.5 supports thinking_budget via http options usually, or maybe config?
                 # For now, 2.5 Flash is standard, keeping simple unless specific budget arg needed.
@@ -233,10 +294,7 @@ def chat_with_board(role, message, context):
             
         elif role == "CMO (Marketing)":
             model_name = "gemini-2.5-flash"
-            system_prompt = """
-            You are the CMO. Expert in StoryBrand, Copywriting, and Growth. 
-            Keep it punchy, high-energy, and focused on conversion.
-            """
+            system_prompt = CMO_PROMPT
 
         full_prompt = f"""
         CONTEXT (Business Status):
@@ -420,7 +478,7 @@ def ask_cmo(campaign_context, asset_type, topic, property_details=None):
         
         config = types.GenerateContentConfig(
             temperature=0.7,
-            system_instruction="You are a world-class Copywriter."
+            system_instruction=CMO_PROMPT
         )
         
         response = client.models.generate_content(

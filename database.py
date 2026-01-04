@@ -103,14 +103,10 @@ def mark_task_complete(task_id):
         return None
 
     try:
+        response = supabase.table("tasks").update({"completed": True}).eq("id", task_id).execute()
         return response.data
     except Exception as e:
         print(f"Error marking task complete: {e}")
-        return None
-
-        return res.data
-    except Exception as e:
-        print(f"Error saving reflection: {e}")
         return None
 
 def add_goal(user_id, description, start_date, end_date, period="weekly", context=None):
@@ -306,6 +302,42 @@ def save_weekly_goal(user_id, description, start_date, end_date):
     except Exception as e:
         print(f"Error adding weekly goal: {e}")
         return None
+
+# --- VECTOR MEMORY (RAG) ---
+
+def store_memory_vector(user_id, content, vector_embedding, meta=None):
+    """Saves text + vector to the 'memories' table."""
+    supabase = init_supabase()
+    if not supabase: return None
+    try:
+        data = {
+            "user_id": user_id,
+            "content": content,
+            "embedding": vector_embedding,
+            "metadata": meta or {}
+        }
+        res = supabase.table("memories").insert(data).execute()
+        return res.data
+    except Exception as e:
+        print(f"Error storing memory: {e}")
+        return None
+
+def recall_memories(user_id, query_embedding, limit=5):
+    """Calls the 'match_memories' RPC function."""
+    supabase = init_supabase()
+    if not supabase: return []
+    try:
+        params = {
+            "query_embedding": query_embedding,
+            "match_threshold": 0.65, # Strict relevance
+            "match_count": limit,
+            "p_user_id": user_id
+        }
+        res = supabase.rpc("match_memories", params).execute()
+        return res.data
+    except Exception as e:
+        print(f"Error recalling memories: {e}")
+        return []
 
 if __name__ == "__main__":
     print("--- Testing Supabase Connection ---")
