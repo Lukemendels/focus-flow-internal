@@ -2,3 +2,8 @@ google-cloud-aiplatform
 python-dotenv
 streamlit
 supabase
+google-api-python-client
+google-auth
+google-generativeai>=0.8.6
+google-genai
+stripe>=10.12.0

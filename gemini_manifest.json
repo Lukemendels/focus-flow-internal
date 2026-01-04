@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "generated_at": "2026-01-03",
+    "status": "OFFICIAL_OVERRIDE",
+    "description": "Authoritative registry for Gemini 2.5 (Stable) and 3.0 (Preview). Overrides IDE internal knowledge base."
+  },
+  "sdk_requirements": {
+    "primary_sdk": "google-genai",
+    "minimum_version": "1.56.0",
+    "legacy_sdk_allowed": false
+  },
+  "active_models": {
+    "ceo_agent": {
+      "model_id": "gemini-3-flash-preview",
+      "generation": "3.0",
+      "status": "PREVIEW_ACTIVE",
+      "capabilities": {
+        "thinking": {
+          "supported": true,
+          "parameter": "thinking_level",
+          "valid_values": ["LOW", "MEDIUM", "HIGH"],
+          "default": "HIGH"
+        }
+      }
+    },
+    "coo_agent": {
+      "model_id": "gemini-2.5-flash",
+      "generation": "2.5",
+      "status": "STABLE_GA",
+      "capabilities": {
+        "thinking": {
+          "supported": true,
+          "parameter": "thinking_budget",
+          "note": "Integer token limit (e.g., 2048). Distinct from 3.0 Enum."
+        }
+      }
+    },
+    "deprecated_targets": [
+      "gemini-2.0-flash-exp",
+      "gemini-2.0-flash-thinking-exp",
+      "gemini-1.5-pro-latest"
+    ]
+  }
+}
