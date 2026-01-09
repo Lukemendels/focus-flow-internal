@@ -4,6 +4,7 @@ import agent
 import database
 import google.generativeai as genai
 import revenue
+import kernel_manager # Import dynamic kernel registry
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
@@ -888,25 +889,45 @@ def render_board_room():
     st.title("🗣️ The Board Room")
     st.caption("Chat with your AI Executive Team")
 
-    # Sidebar: Select Agent
+    # Sidebar: Select Agent (Dynamic from DB)
     with st.sidebar:
         st.header("Who is Speaking?")
-        agent_role = st.radio(
+        
+        # Fetch Active Kernels
+        active_roles = kernel_manager.list_active_kernels()
+        
+        # Fallback if DB fetch fails
+        if not active_roles:
+            active_roles = ["The Chairman", "Strategic Architect", "Operational Commander", "Market Alchemist"]
+        
+        # Optional: Add Genesis Mode (The Builder)
+        # Genesis Mode is special - maybe we add it manually to the list for now?
+        # active_roles.append("Genesis Architect") 
+
+        agent_role = st.selectbox(
             "Select Agent:",
-            ["CEO (Strategy)", "COO (Operations)", "CMO (Marketing)"]
+            active_roles
         )
-        st.info({
-            "CEO (Strategy)": "Focus: High-level strategy, 'Who not How', Revenue.",
-            "COO (Operations)": "Focus: Execution, Efficiency, 'The 4-Hour Rule'.",
-            "CMO (Marketing)": "Focus: Growth, StoryBrand, Copywriting."
-        }[agent_role])
+
+        st.info(f"Speaking with: **{agent_role}**")
+        
+        # Legacy Info Block - removed or made dynamic?
+        # For now, simplistic info based on known defaults or just generic
+        if "Strategic Architect" in agent_role or "CEO" in agent_role:
+             st.caption("Focus: High-level strategy, 'Who not How'.")
+        elif "Operational Commander" in agent_role or "COO" in agent_role:
+             st.caption("Focus: Execution, Efficiency, 'The 4-Hour Rule'.")
+        elif "Market Alchemist" in agent_role or "CMO" in agent_role:
+             st.caption("Focus: Growth, StoryBrand, Copywriting.")
+        elif "Chairman" in agent_role:
+             st.caption("Focus: Routing & Orchestration.")
         
         if st.button("Clear Chat"):
             st.session_state.chat_history = []
             st.rerun()
 
     # Sticky Chat Input
-    if prompt := st.chat_input(f"Ask {agent_role.split()[0]}..."):
+    if prompt := st.chat_input(f"Ask {agent_role}..."):
         # Add user message
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         
@@ -937,7 +958,8 @@ def render_board_room():
         else:
             # Different avatars for roles?
             name = msg.get("name", "AI")
-            avatar = "👔" if "CEO" in name else "⚙️" if "COO" in name else "📢"
+            avatar = "👔" if "Strategic" in name or "CEO" in name else "⚙️" if "Operational" in name or "COO" in name else "📢"
+            if "Chairman" in name: avatar = "🏛️"
             with st.chat_message("assistant", avatar=avatar):
                 st.markdown(f"**{name}:**")
                 st.write(msg["content"])

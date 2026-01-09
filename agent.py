@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 import database # Import database layer
+import kernel_manager # Import kernel manager for prompt fetching
 
 # Load environment variables
 load_dotenv()
@@ -12,7 +13,8 @@ load_dotenv()
 client = None
 
 # System Instruction
-COO_PROMPT = """
+# System Instruction (Constants now acting as Fallbacks)
+FALLBACK_COO_PROMPT = """
 IDENTITY:
 You are the Chief of Staff (COO). You are the gatekeeper against Entropy and "The Resistance" (Pressfield).
 Your Philosophy: "Essentialism" (McKeown) and "The 20 Mile March" (Collins).
@@ -34,7 +36,7 @@ OUTPUT (JSON):
 {"decision": "APPROVED" | "REJECTED" | "WARNING", "reasoning": "Reference 'The Resistance' or 'Throughput' in your logic."}
 """
 
-CEO_SYSTEM_PROMPT = """
+FALLBACK_CEO_SYSTEM_PROMPT = """
 IDENTITY:
 You are the CEO and Co-Founder. You operate with "Level 5 Leadership" (Humility + Will).
 Your Core Philosophy: Jim Collins (Good to Great) and Seth Godin (Linchpin).
@@ -58,7 +60,7 @@ INSTRUCTION:
 When presented with a choice or reflection, use your "Thinking" process to simulate the long-term impact on our Flywheel. If a task does not fit the Hedgehog Concept, kill it.
 """
 
-CMO_PROMPT = """
+FALLBACK_CMO_PROMPT = """
 IDENTITY:
 You are the CMO. You are an expert in the StoryBrand Framework (Donald Miller) and "Purple Cow" marketing (Seth Godin).
 
@@ -188,13 +190,17 @@ def ask_ceo(quarterly_context, user_reflection):
         }}
         """
         
+        # Fetch Dynamic Prompt
+        kernel = kernel_manager.fetch_kernel("Strategic Architect")
+        system_prompt = kernel['system_prompt'] if kernel else FALLBACK_CEO_SYSTEM_PROMPT
+
         try:
             response = client.models.generate_content(
                 model='gemini-3-flash-preview',
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.7,
-                    system_instruction=CEO_SYSTEM_PROMPT,
+                    system_instruction=system_prompt,
                     thinking_config=types.ThinkingConfig(
                         include_thoughts=True
                     )
@@ -209,7 +215,7 @@ def ask_ceo(quarterly_context, user_reflection):
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.7,
-                    system_instruction=CEO_SYSTEM_PROMPT,
+                    system_instruction=system_prompt,
                     thinking_config=types.ThinkingConfig(
                         include_thoughts=True
                     )
@@ -248,11 +254,15 @@ def ask_chief_of_staff(user_context, big_3_tasks, secondary_tasks, day_of_week="
         {secondary_str if secondary_tasks else "None"}
         """
         
+        # Fetch Dynamic Prompt
+        kernel = kernel_manager.fetch_kernel("Operational Commander")
+        system_prompt = kernel['system_prompt'] if kernel else FALLBACK_COO_PROMPT
+
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction=COO_PROMPT,
+                system_instruction=system_prompt,
                 temperature=0.7,
                 # Gemini 2.5 supports thinking_budget via http options usually, or maybe config?
                 # For now, 2.5 Flash is standard, keeping simple unless specific budget arg needed.
@@ -277,25 +287,34 @@ def chat_with_board(role, message, context):
         model_name = "gemini-2.5-flash"
         system_prompt = ""
         config = types.GenerateContentConfig(temperature=0.7)
-
+        
+        # MAPPING LOGIC
+        target_role_name = ""
         if role == "CEO (Strategy)":
-            model_name = "gemini-3-flash-preview"
-            system_prompt = CEO_SYSTEM_PROMPT
-            config = types.GenerateContentConfig(
+             target_role_name = "Strategic Architect"
+             model_name = "gemini-3-flash-preview"
+             config = types.GenerateContentConfig(
                 temperature=0.7,
-                thinking_config=types.ThinkingConfig(
-                    include_thoughts=True
-                )
-            )
-            
+                thinking_config=types.ThinkingConfig(include_thoughts=True)
+             )
         elif role == "COO (Operations)":
-            model_name = "gemini-2.5-flash"
-            system_prompt = COO_PROMPT
-            
+             target_role_name = "Operational Commander"
+             model_name = "gemini-2.5-flash"
         elif role == "CMO (Marketing)":
-            model_name = "gemini-2.5-flash"
-            system_prompt = CMO_PROMPT
+             target_role_name = "Market Alchemist"
+             model_name = "gemini-2.5-flash"
 
+        # Fetch Kernel
+        if target_role_name:
+            kernel = kernel_manager.fetch_kernel(target_role_name)
+            if kernel:
+                system_prompt = kernel['system_prompt']
+            else:
+                # Fallbacks
+                if role == "CEO (Strategy)": system_prompt = FALLBACK_CEO_SYSTEM_PROMPT
+                elif role == "COO (Operations)": system_prompt = FALLBACK_COO_PROMPT
+                elif role == "CMO (Marketing)": system_prompt = FALLBACK_CMO_PROMPT
+        
         full_prompt = f"""
         CONTEXT (Business Status):
         {context}
@@ -318,11 +337,11 @@ def chat_with_board(role, message, context):
         except Exception as e:
             if "gemini-3" in model_name:
                  # Fallback
-                 config.system_instruction = CEO_SYSTEM_PROMPT
+                 config.system_instruction = FALLBACK_CEO_SYSTEM_PROMPT
                  # Remove thinking config for 2.5 if it was set (types object doesn't have pop, create new)
                  config = types.GenerateContentConfig(
                      temperature=0.7,
-                     system_instruction=CEO_SYSTEM_PROMPT,
+                     system_instruction=FALLBACK_CEO_SYSTEM_PROMPT,
                      thinking_config=types.ThinkingConfig(include_thoughts=True)
                  )
                  response = client.models.generate_content(
@@ -476,9 +495,13 @@ def ask_cmo(campaign_context, asset_type, topic, property_details=None):
         Just the content formatted in Markdown. No preamble.
         """
         
+        # Fetch Dynamic Prompt
+        kernel = kernel_manager.fetch_kernel("Market Alchemist")
+        system_prompt = kernel['system_prompt'] if kernel else FALLBACK_CMO_PROMPT
+
         config = types.GenerateContentConfig(
             temperature=0.7,
-            system_instruction=CMO_PROMPT
+            system_instruction=system_prompt
         )
         
         response = client.models.generate_content(
