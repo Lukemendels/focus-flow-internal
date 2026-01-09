@@ -243,7 +243,17 @@ def ask_chief_of_staff(user_context, big_3_tasks, secondary_tasks, day_of_week="
         big_3_str = "\n".join([f"- {t['name']} ({t['hours']} hours)" for t in big_3_tasks])
         secondary_str = "\n".join([f"- {t['name']} ({t['hours']} hours)" for t in secondary_tasks])
         
-        prompt = f"""
+        # Fetch Kernel
+        kernel = kernel_manager.fetch_kernel("Operational Commander")
+        system_prompt = kernel['system_prompt'] if kernel else FALLBACK_COO_PROMPT
+        
+        # Tools
+        executable_tools = []
+        if kernel and kernel.get('tools_enabled'):
+            executable_tools = kernel_manager.get_executable_tools(kernel['tools_enabled'])
+
+        
+        user_msg = f"""
         USER CONTEXT: {user_context}
         
         PROPOSED TASKS:
@@ -253,23 +263,18 @@ def ask_chief_of_staff(user_context, big_3_tasks, secondary_tasks, day_of_week="
         Secondary:
         {secondary_str if secondary_tasks else "None"}
         """
+
         
-        # Fetch Dynamic Prompt
-        kernel = kernel_manager.fetch_kernel("Operational Commander")
-        system_prompt = kernel['system_prompt'] if kernel else FALLBACK_COO_PROMPT
+        config = types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.7
+        )
 
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.7,
-                # Gemini 2.5 supports thinking_budget via http options usually, or maybe config?
-                # For now, 2.5 Flash is standard, keeping simple unless specific budget arg needed.
-                # Manifest says "parameter: thinking_budget".
-                # If SDK supports it, likely in ThinkingConfig too.
-                # thinking_config=types.ThinkingConfig(thinking_budget=1024) 
-            )
+            contents=user_msg,
+            config=config,
+            tools=executable_tools if executable_tools else None
         )
             
         return clean_json_output(response.text)
@@ -289,31 +294,39 @@ def chat_with_board(role, message, context):
         config = types.GenerateContentConfig(temperature=0.7)
         
         # MAPPING LOGIC
-        target_role_name = ""
-        if role == "CEO (Strategy)":
-             target_role_name = "Strategic Architect"
+        target_role_name = role # Default to assuming role is the DB Key
+        
+        # Legacy Backward Compatibility
+        if role == "CEO (Strategy)": target_role_name = "Strategic Architect"
+        elif role == "COO (Operations)": target_role_name = "Operational Commander"
+        elif role == "CMO (Marketing)": target_role_name = "Market Alchemist"
+
+        # Model Config Logic
+        if "Strategic Architect" in target_role_name or "CEO" in role:
              model_name = "gemini-3-flash-preview"
              config = types.GenerateContentConfig(
                 temperature=0.7,
                 thinking_config=types.ThinkingConfig(include_thoughts=True)
              )
-        elif role == "COO (Operations)":
-             target_role_name = "Operational Commander"
+        else:
+             # Default for Chairman, COO, CMO, etc.
              model_name = "gemini-2.5-flash"
-        elif role == "CMO (Marketing)":
-             target_role_name = "Market Alchemist"
-             model_name = "gemini-2.5-flash"
+             config = types.GenerateContentConfig(temperature=0.7)
 
         # Fetch Kernel
-        if target_role_name:
-            kernel = kernel_manager.fetch_kernel(target_role_name)
-            if kernel:
-                system_prompt = kernel['system_prompt']
-            else:
-                # Fallbacks
-                if role == "CEO (Strategy)": system_prompt = FALLBACK_CEO_SYSTEM_PROMPT
-                elif role == "COO (Operations)": system_prompt = FALLBACK_COO_PROMPT
-                elif role == "CMO (Marketing)": system_prompt = FALLBACK_CMO_PROMPT
+        kernel = kernel_manager.fetch_kernel(target_role_name)
+        
+        executable_tools = []
+        if kernel:
+            system_prompt = kernel['system_prompt']
+            # Fetch tools if enabled
+            if kernel.get('tools_enabled'):
+                executable_tools = kernel_manager.get_executable_tools(kernel['tools_enabled'])
+        else:
+            # Fallbacks
+            if role == "CEO (Strategy)": system_prompt = FALLBACK_CEO_SYSTEM_PROMPT
+            elif role == "COO (Operations)": system_prompt = FALLBACK_COO_PROMPT
+            elif role == "CMO (Marketing)": system_prompt = FALLBACK_CMO_PROMPT
         
         full_prompt = f"""
         CONTEXT (Business Status):
@@ -323,33 +336,109 @@ def chat_with_board(role, message, context):
         {message}
         """
 
-        # Set system prompt in content or config? 
-        # google-genai supports system_instruction in config.
+        # Set system prompt
         config.system_instruction = system_prompt
+        
+        # Tool Binding logic
+        # tools arg in generate_content takes a list of types.Tool or python functions
+        active_tools = executable_tools if executable_tools else None
 
         try:
+            # Initial Generation
             response = client.models.generate_content(
                 model=model_name,
                 contents=full_prompt,
-                config=config
+                config=config,
+                tools=active_tools # Bind tools
             )
+            
+            # --- Function Calling Loop ---
+            # If the model wants to call a function, it returns a function_call in the parts
+            # We must execute it and send the result back. This currently supports single-turn tool use.
+            
+            if response.function_calls:
+                # We have a tool call!
+                # Since we passed python functions, the SDK might handle execution if we used the 'automatic_function_calling' feature?
+                # Actually, automatic function calling is a feature of the ChatSession, not single generate_content usually unless configured.
+                # However, with google-genai SDK, passing functions allows the model to respond with a call.
+                # We need to manually execute and send back if using generate_content stateless.
+                # But wait, ChatSession is better for this.
+                # For this implementation, let's keep it stateless but handle the turn.
+                
+                parts = []
+                # Add the model's request to history context (simulated)
+                # Actually, to continue, we need to send the function response.
+                
+                # Execute calls
+                function_responses = []
+                for fc in response.function_calls:
+                     name = fc.name
+                     args = fc.args
+                     
+                     # Find function
+                     func = next((f for f in executable_tools if f.__name__ == name), None)
+                     if func:
+                         try:
+                             # Execute
+                             print(f"Executing Tool: {name} with {args}")
+                             result = func(**args)
+                         except Exception as exc:
+                             result = f"Error executing {name}: {exc}"
+                     else:
+                         result = f"Error: Tool {name} not found."
+                         
+                     function_responses.append(
+                         types.Part.from_function_response(
+                             name=name,
+                             response={"result": result}
+                         )
+                     )
+                
+                # Send back to model
+                # We need to send: User Message -> Model Tool Call -> User Tool Response
+                # This requires constructing the history properly or recursive call.
+                # Let's do a second call with the history.
+                
+                # Construct History for 2nd turn
+                # 1. User Message (full_prompt)
+                # 2. Model Response (response.candidates[0].content) -- The Tool Call
+                # 3. User Response (Function Output)
+                
+                history_contents = [
+                    types.Content(role="user", parts=[types.Part.from_text(text=full_prompt)]),
+                    response.candidates[0].content,
+                    types.Content(role="user", parts=function_responses)
+                ]
+                
+                # Generate Final Answer
+                response2 = client.models.generate_content(
+                    model=model_name,
+                    contents=history_contents,
+                    config=config
+                    # Tools still bound? Maybe optional for final turn, but safer to keep.
+                )
+                return clean_json_output(response2.text)
+
             return clean_json_output(response.text)
+
         except Exception as e:
             if "gemini-3" in model_name:
-                 # Fallback
+                 # Fallback logic for Error (e.g. 3.0 API issues)
+                 # ... (existing fallback code simplified for brevity, kept structure)
                  config.system_instruction = FALLBACK_CEO_SYSTEM_PROMPT
-                 # Remove thinking config for 2.5 if it was set (types object doesn't have pop, create new)
+                 # Remove thinking config for 2.5
                  config = types.GenerateContentConfig(
                      temperature=0.7,
                      system_instruction=FALLBACK_CEO_SYSTEM_PROMPT,
                      thinking_config=types.ThinkingConfig(include_thoughts=True)
                  )
+                 # Note: Tools might be the cause, but let's strip them for fallback safety
                  response = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=full_prompt,
                     config=config
                  )
-                 return clean_json_output(response.text) + " (via Gemini 2.5)"
+                 return clean_json_output(response.text) + " (via Gemini 2.5 Fallback)"
             raise e
 
     except Exception as e:
@@ -362,8 +451,16 @@ def run_weekly_review_interview(completed_tasks_context):
     try:
         if not client: init_genai()
         
-        prompt = f"""
-        ROLE: Chief of Staff (COO).
+        # Fetch Kernel
+        kernel = kernel_manager.fetch_kernel("Operational Commander")
+        system_prompt = kernel['system_prompt'] if kernel else FALLBACK_COO_PROMPT
+        
+        # Tools Pattern (even if unused here, good practice)
+        executable_tools = []
+        if kernel and kernel.get('tools_enabled'):
+             executable_tools = kernel_manager.get_executable_tools(kernel['tools_enabled'])
+        
+        user_msg = f"""
         GOAL: Help the user reflect on their week.
         
         COMPLETED TASKS LAST WEEK:
@@ -382,11 +479,18 @@ def run_weekly_review_interview(completed_tasks_context):
             ]
         }}
         """
+
+        config = types.GenerateContentConfig(
+             system_instruction=system_prompt,
+             temperature=0.7
+        )
         
         # Use simple model for speed? gemini-2.5 is fast enough.
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=prompt
+            contents=user_msg,
+            config=config,
+            tools=executable_tools if executable_tools else None
         )
         return clean_json_output(response.text)
         
@@ -400,8 +504,16 @@ def run_strategic_planning(annual_vision, seasonality_context):
     try:
         if not client: init_genai()
         
-        prompt = f"""
-        ROLE: CEO of a high-performance one-person company.
+        # Fetch Kernel
+        kernel = kernel_manager.fetch_kernel("Strategic Architect")
+        system_prompt = kernel['system_prompt'] if kernel else FALLBACK_CEO_SYSTEM_PROMPT
+        
+        # Tools
+        executable_tools = []
+        if kernel and kernel.get('tools_enabled'):
+            executable_tools = kernel_manager.get_executable_tools(kernel['tools_enabled'])
+
+        user_content = f"""
         GOAL: Define the Roadmap for the upcoming Quarter (Q1, Q2, etc).
         
         INPUTS:
@@ -423,13 +535,15 @@ def run_strategic_planning(annual_vision, seasonality_context):
         
         response = client.models.generate_content(
             model='gemini-3-flash-preview',
-            contents=prompt,
+            contents=user_content,
             config=types.GenerateContentConfig(
                 temperature=0.7,
+                system_instruction=system_prompt,
                 thinking_config=types.ThinkingConfig(
                     include_thoughts=True
                 )
-            )
+            ),
+            tools=executable_tools if executable_tools else None
         )
         return clean_json_output(response.text)
     except Exception as e:

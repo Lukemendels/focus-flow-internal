@@ -1,5 +1,12 @@
 import streamlit as st
 import database
+import tools
+
+# Tool Registry Mapping
+TOOL_REGISTRY = {
+    "read_logs": tools.read_recent_logs,
+    "knowledge_search": tools.search_knowledge_base
+}
 
 # Cache the kernel data to avoid hitting the DB on every run
 # ttl=600 means clear cache every 10 minutes to allow for updates
@@ -66,3 +73,25 @@ def log_interaction(kernel_id, user_input, output, logic_trace=None):
     except Exception as e:
         print(f"Error logging interaction: {e}")
         return None
+
+def get_executable_tools(tool_names):
+    """
+    Maps a list of tool names (strings) to actual Python functions.
+    
+    Args:
+        tool_names (list): List of strings e.g. ['read_logs']
+        
+    Returns:
+        list: List of callable functions.
+    """
+    if not tool_names:
+        return []
+        
+    executable_tools = []
+    for name in tool_names:
+        if name in TOOL_REGISTRY:
+            executable_tools.append(TOOL_REGISTRY[name])
+        else:
+            print(f"Warning: Tool '{name}' found in DB but not in Registry.")
+            
+    return executable_tools
