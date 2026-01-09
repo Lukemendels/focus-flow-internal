@@ -114,6 +114,7 @@ The agent personas have been upgraded to "Latent Expert" models using specific p
 /home/luke/focus-flow-internal/
 ├── agent.py            # AI Logic (Personas + RAG + Client)
 ├── app.py              # Main Entry Point
+├── calendar_service.py # Google Calendar Integration
 ├── database.py         # Persistence & Vector Logic
 ├── revenue.py          # Financial Telemetry
 ├── technical_architecture_report.md
@@ -125,6 +126,7 @@ The agent personas have been upgraded to "Latent Expert" models using specific p
 - **Router:** `agent.chat_with_board`.
 - **Capabilities:**
   - **RAG:** Enabled for CEO Context.
+  - **Calendar:** Active in `app.py` for capacity planning (Constraint Analysis).
   - **Tools:** Logic exists (`revenue.py`, `database.py`) but is not exposed as "Function Calling" definitions to the Agents. Agents are advisory.
 
 ---

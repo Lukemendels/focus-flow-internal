@@ -7,3 +7,4 @@ google-auth
 google-generativeai>=0.8.6
 google-genai
 stripe>=10.12.0
+google-cloud-billing-budgets
