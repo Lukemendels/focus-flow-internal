@@ -1,83 +1,30 @@
-# Technical Architecture Report: Focus Flow System (v1.1)
+# Technical Architecture Report: Focus Flow System (v2.0 - Mendelsohn Kernel Standard)
 
 This report audits the current implementation against the desired "Hybrid Memory" architecture.
 
 ## 1. Agent Persona & Logic Audit
 
-The agent personas have been upgraded to "Latent Expert" models using specific philosophical frameworks.
+The agent personas have been migrated from hardcoded Python variables to a **Dynamic Kernel Registry** stored in Supabase (M mendelsohn Kernel Standard v1.1).
 
-### **COO (Chief of Staff)**
-- **File:** `agent.py`
-- **Variable:** `COO_PROMPT`
-- **Philosophy:** Steven Pressfield ("The Resistance") + Greg McKeown ("Essentialism").
-- **Content:**
-  ```text
-  IDENTITY:
-  You are the Chief of Staff (COO). You are the gatekeeper against Entropy and "The Resistance" (Pressfield).
-  Your Philosophy: "Essentialism" (McKeown) and "The 20 Mile March" (Collins).
+### **Kernel 1: The Chairman (Router)**
+- **Role:** Orchestration Layer.
+- **Function:** Classifies intent and routes to the correct Expert Kernel.
+- **Source:** SQL `kernels` table.
 
-  **(Consistency Note: This prompt is now unified across both Chat and Task execution functions).**
+### **Kernel 2: Operational Commander (COO)**
+- **Role:** Execution Engine.
+- **Philosophy:** "Extreme Ownership" + "Essentialism".
+- **Logic Gates:** PARETO_PRINCIPLE, CONSTRAINT_ANALYSIS.
 
-  YOUR MISSION:
-  Manage "Cognitive Load" and "Operational Throughput."
-  Your enemy is context switching and "The Resistance".
+### **Kernel 3: Strategic Architect (CEO)**
+- **Role:** Strategy Engine.
+- **Philosophy:** "Infinite Game" + "Hedgehog Concept".
+- **Logic Gates:** TIME_HORIZON_CHECK, FIRST_WHO.
 
-  CORE PROTOCOLS:
-  1. Protect the "Big 3" (Revenue Drivers).
-  2. The 20 Mile March: Consistency > Intensity.
-  3. Constraint Analysis: Reject schedules > 100% capacity.
-
-  CRITICAL HEURISTIC (THE 4-HOUR TEST):
-  - Low Focus (<4h): "Amateur Mode." Authorize ONLY "The Daily Big 1."
-  - High Focus (>=4h): "Pro Mode." Authorize up to "The Daily Big 3."
-  ```
-
-### **CEO (Strategy)**
-- **File:** `agent.py`
-- **Variable:** `CEO_SYSTEM_PROMPT`
-- **Philosophy:** Jim Collins ("Good to Great", "Hedgehog Concept") + Seth Godin ("Linchpin").
-- **Content:**
-  ```text
-  IDENTITY:
-  You are the CEO and Co-Founder. You operate with "Level 5 Leadership".
-  Your Core Philosophy: Jim Collins (Good to Great) and Seth Godin (Linchpin).
-
-  STRATEGIC FRAMEWORK (THE HEDGEHOG CONCEPT):
-  1. What are we deeply passionate about?
-  2. What can we be the best in the world at?
-  3. What drives our economic engine?
-
-  YOUR OPERATING SYSTEM:
-  - The Flywheel
-  - Fire Bullets, Then Cannonballs
-  - Real Artists Ship
-
-  INSTRUCTION:
-  Simulate long-term impact on our Flywheel. If a task does not fit the Hedgehog Concept, kill it.
-  ```
-
-### **CMO (Marketing)**
-- **File:** `agent.py`
-- **Variable:** `CMO_PROMPT`
-- **Philosophy:** Donald Miller ("StoryBrand") + Seth Godin ("Purple Cow").
-- **Content:**
-  ```text
-  IDENTITY:
-  You are the CMO. Expert in StoryBrand Framework and "Purple Cow" marketing.
-
-  CORE FRAMEWORK (SB7):
-  1. The Character
-  2. The Problem
-  3. The Guide
-  4. The Plan
-  5. The Call to Action
-  6. Failure/Success
-
-  STYLE GUIDELINES:
-  - "Show Your Work" (Austin Kleon)
-  - Be Remarkable (Purple Cow)
-  - Villain-Centric
-  ```
+### **Kernel 4: Market Alchemist (CMO)**
+- **Role:** Narrative Engine.
+- **Philosophy:** "StoryBrand" + "Purple Cow".
+- **Logic Gates:** HERO_INVERSION, REMARKABILITY_CHECK.
 
 ---
 
@@ -101,9 +48,10 @@ The agent personas have been upgraded to "Latent Expert" models using specific p
   - **Retrieval:** `database.recall_memories` calls Supabase RPC `match_memories` using Cosine Similarity (`text-embedding-004`).
   - **Integration:** `ask_ceo` automatically embeds the User Reflection, queries relevant past memories, and injects them into the prompt.
 
-### **Tool Memory**
-- **Status:** ⚠️ **Transient**
-- **Audit Findings:** Tool outputs are not persisted to a `tool_logs` table.
+### **Tool Memory (Kernel Logs)**
+- **Status:** ✅ **IMPLEMENTED**
+- **Infrastructure:** `kernel_logs` table.
+- **Function:** Tracks `user_input`, `logic_trace`, and `output` for every kernel interaction to enable hallucination auditing.
 
 ---
 
@@ -112,22 +60,26 @@ The agent personas have been upgraded to "Latent Expert" models using specific p
 ### **Project Structure**
 ```
 /home/luke/focus-flow-internal/
-├── agent.py            # AI Logic (Personas + RAG + Client)
-├── app.py              # Main Entry Point
+├── agent.py            # AI Logic (MKS Client)
+├── app.py              # Main Entry Point (Frontend)
+├── kernel_manager.py   # Dynamic Registry Interface [NEW]
 ├── calendar_service.py # Google Calendar Integration
 ├── database.py         # Persistence & Vector Logic
 ├── revenue.py          # Financial Telemetry
 ├── technical_architecture_report.md
+├── mks_schema.sql      # Database Schema (Source of Truth)
+├── seed_*.sql          # Kernel DNA Seeds
 └── .env                # Secrets
 ```
 
 ### **Wiring & Capabilities**
-- **Entry Point:** `app.py`.
-- **Router:** `agent.chat_with_board`.
+- **Entry Point:** `app.py` initializes `kernel_manager` to fetch Active Kernels for Sidebar.
+- **Orchestration:** `agent.py` imports `kernel_manager` to fetch `system_prompt` at runtime.
 - **Capabilities:**
+  - **Dynamic Personality:** Agents can be updated via SQL without redeploying code.
   - **RAG:** Enabled for CEO Context.
-  - **Calendar:** Active in `app.py` for capacity planning (Constraint Analysis).
-  - **Tools:** Logic exists (`revenue.py`, `database.py`) but is not exposed as "Function Calling" definitions to the Agents. Agents are advisory.
+  - **Calendar:** Active in `app.py`.
+  - **Audit Logging:** All interactions logged to `kernel_logs`.
 
 ---
 
@@ -144,9 +96,9 @@ The agent personas have been upgraded to "Latent Expert" models using specific p
     - **Gap:** While we have *Retrieval* (Reading), we do not yet have an automated trigger to *Write* new memories to the vector store (e.g., auto-save valuable insights from the CEO as new memories).
     - **Fix Needed:** Add logic to `ask_ceo` or `chat_with_board` to call `store_memory_vector` when high-value strategic decisions are made.
 
-3.  **Missing Tool Logging:**
-    - **Gap:** No record of tool executions.
-    - **Fix Needed:** Create `tool_logs` table.
+3.  **Missing Vertex Context Caching:**
+    - **Gap:** The "Board Room" has no memory of previous messages *within* the session.
+    - **Fix Needed:** Implement `vertexai.preview.cached_content` for multi-turn cost efficiency.
 
 4.  **No Autonomous Tool Use:**
     - **Gap:** Agents cannot actively *call* tools (e.g. "Check Revenue").
