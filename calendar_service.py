@@ -5,7 +5,20 @@ import os
 import json
 
 # Scopes required
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+# Scopes required
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+def get_calendar_service():
+    """Authenticates and returns the Google Calendar Service."""
+    creds = None
+    if os.path.exists('gcp_key.json'):
+        creds = service_account.Credentials.from_service_account_file(
+            'gcp_key.json', scopes=SCOPES)
+    else:
+        print("Error: gcp_key.json not found.")
+        return None
+
+    return build('calendar', 'v3', credentials=creds)
 
 def get_todays_events():
     """
@@ -15,16 +28,9 @@ def get_todays_events():
         total_hours (float): Total duration of today's meetings.
     """
     try:
-        # Load credentials
-        creds = None
-        if os.path.exists('gcp_key.json'):
-            creds = service_account.Credentials.from_service_account_file(
-                'gcp_key.json', scopes=SCOPES)
-        else:
-            print("Error: gcp_key.json not found.")
+        service = get_calendar_service()
+        if not service:
             return [], 0.0
-
-        service = build('calendar', 'v3', credentials=creds)
 
         # Time range: Start of today (00:00) to End of today (23:59)
         now = datetime.datetime.now()

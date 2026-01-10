@@ -194,7 +194,23 @@ def ask_ceo(quarterly_context, user_reflection):
         kernel = kernel_manager.fetch_kernel("Strategic Architect")
         system_prompt = kernel['system_prompt'] if kernel else FALLBACK_CEO_SYSTEM_PROMPT
 
+        # Thinking Config
+        thinking_level = kernel.get("thinking_level", "MINIMAL") if kernel else "HIGH"
+        include_thoughts = True # Always include thoughts for 3.0 Flash if capable
+
+        # Map Level
+        # Note: SDK might expect "HIGH", "MEDIUM", "LOW" strings directly for thinking_level parameter if avoiding Enum.
+        # But user requested types.ThinkingLevel lookup. 
+        # Checking SDK: types.ThinkingConfig(include_thoughts=True, thinking_level="HIGH") is valid.
+        
         try:
+            # Tools logic for CEO (was missing in previous view but needed)
+            # Fetch tools
+            executable_tools = []
+            if kernel and kernel.get('tools_enabled'):
+                executable_tools = kernel_manager.get_executable_tools(kernel['tools_enabled'])
+            active_tools = executable_tools if executable_tools else None
+
             response = client.models.generate_content(
                 model='gemini-3-flash-preview',
                 contents=prompt,
@@ -202,8 +218,10 @@ def ask_ceo(quarterly_context, user_reflection):
                     temperature=0.7,
                     system_instruction=system_prompt,
                     thinking_config=types.ThinkingConfig(
-                        include_thoughts=True
-                    )
+                        include_thoughts=include_thoughts,
+                        thinking_level=thinking_level
+                    ),
+                    tools=active_tools # Tools moved to config
                 )
             )
             return clean_json_output(response.text)
@@ -265,16 +283,23 @@ def ask_chief_of_staff(user_context, big_3_tasks, secondary_tasks, day_of_week="
         """
 
         
+        # Thinking Config
+        thinking_level = kernel.get("thinking_level", "MINIMAL") if kernel else "LOW"
+        
         config = types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                temperature=0.7
+                temperature=0.7,
+                thinking_config=types.ThinkingConfig(
+                    include_thoughts=True,
+                    thinking_level=thinking_level
+                ),
+                tools=executable_tools if executable_tools else None
         )
 
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3-flash-preview',
             contents=user_msg,
-            config=config,
-            tools=executable_tools if executable_tools else None
+            config=config
         )
             
         return clean_json_output(response.text)
@@ -289,44 +314,59 @@ def chat_with_board(role, message, context):
     try:
         if not client: init_genai()
         
-        model_name = "gemini-2.5-flash"
-        system_prompt = ""
-        config = types.GenerateContentConfig(temperature=0.7)
-        
-        # MAPPING LOGIC
-        target_role_name = role # Default to assuming role is the DB Key
-        
-        # Legacy Backward Compatibility
+        # 1. Determine Target Role Logic
+        target_role_name = role 
         if role == "CEO (Strategy)": target_role_name = "Strategic Architect"
         elif role == "COO (Operations)": target_role_name = "Operational Commander"
         elif role == "CMO (Marketing)": target_role_name = "Market Alchemist"
 
-        # Model Config Logic
-        if "Strategic Architect" in target_role_name or "CEO" in role:
-             model_name = "gemini-3-flash-preview"
-             config = types.GenerateContentConfig(
-                temperature=0.7,
-                thinking_config=types.ThinkingConfig(include_thoughts=True)
-             )
-        else:
-             # Default for Chairman, COO, CMO, etc.
-             model_name = "gemini-2.5-flash"
-             config = types.GenerateContentConfig(temperature=0.7)
-
-        # Fetch Kernel
+        # 2. Fetch Kernel (DNA)
         kernel = kernel_manager.fetch_kernel(target_role_name)
         
+        # 3. Determine System Prompt & Tools
+        system_prompt = ""
         executable_tools = []
+        
         if kernel:
-            system_prompt = kernel['system_prompt']
-            # Fetch tools if enabled
+            system_prompt = kernel.get('system_prompt', "")
             if kernel.get('tools_enabled'):
                 executable_tools = kernel_manager.get_executable_tools(kernel['tools_enabled'])
         else:
             # Fallbacks
             if role == "CEO (Strategy)": system_prompt = FALLBACK_CEO_SYSTEM_PROMPT
-            elif role == "COO (Operations)": system_prompt = FALLBACK_COO_PROMPT
+            elif role == "COO (Operations)": usage_prompt = FALLBACK_COO_PROMPT
             elif role == "CMO (Marketing)": system_prompt = FALLBACK_CMO_PROMPT
+            
+        # 4. Determine Thinking Level (Variable Intelligence)
+        # Default to MINIMAL
+        thinking_level = "MINIMAL"
+        
+        if kernel and "thinking_level" in kernel:
+            thinking_level = kernel["thinking_level"]
+        else:
+             # Fallback Logic based on Role
+             if "Strategic Architect" in target_role_name or "CEO" in role:
+                 thinking_level = "HIGH"
+             elif "Market Alchemist" in target_role_name or "CMO" in role:
+                 thinking_level = "LOW"
+             else:
+                 thinking_level = "MINIMAL"
+
+        # 5. Configure Client
+        # We always use gemini-3-flash-preview now
+        model_name = "gemini-3-flash-preview"
+        
+        active_tools = executable_tools if executable_tools else None
+        
+        config = types.GenerateContentConfig(
+            temperature=0.7,
+            system_instruction=system_prompt,
+            thinking_config=types.ThinkingConfig(
+                include_thoughts=True,
+                thinking_level=thinking_level
+            ),
+            tools=active_tools
+        )
         
         full_prompt = f"""
         CONTEXT (Business Status):
@@ -336,40 +376,19 @@ def chat_with_board(role, message, context):
         {message}
         """
 
-        # Set system prompt
-        config.system_instruction = system_prompt
-        
-        # Tool Binding logic
-        # tools arg in generate_content takes a list of types.Tool or python functions
+        # Tool Binding
         active_tools = executable_tools if executable_tools else None
 
         try:
-            # Initial Generation
+            # Generation
             response = client.models.generate_content(
                 model=model_name,
                 contents=full_prompt,
-                config=config,
-                tools=active_tools # Bind tools
+                config=config
             )
             
-            # --- Function Calling Loop ---
-            # If the model wants to call a function, it returns a function_call in the parts
-            # We must execute it and send the result back. This currently supports single-turn tool use.
-            
+            # Function Calling Loop (Manual Turn)
             if response.function_calls:
-                # We have a tool call!
-                # Since we passed python functions, the SDK might handle execution if we used the 'automatic_function_calling' feature?
-                # Actually, automatic function calling is a feature of the ChatSession, not single generate_content usually unless configured.
-                # However, with google-genai SDK, passing functions allows the model to respond with a call.
-                # We need to manually execute and send back if using generate_content stateless.
-                # But wait, ChatSession is better for this.
-                # For this implementation, let's keep it stateless but handle the turn.
-                
-                parts = []
-                # Add the model's request to history context (simulated)
-                # Actually, to continue, we need to send the function response.
-                
-                # Execute calls
                 function_responses = []
                 for fc in response.function_calls:
                      name = fc.name
@@ -377,15 +396,13 @@ def chat_with_board(role, message, context):
                      
                      # Find function
                      func = next((f for f in executable_tools if f.__name__ == name), None)
+                     result = f"Error: Tool {name} not found."
                      if func:
                          try:
-                             # Execute
                              print(f"Executing Tool: {name} with {args}")
                              result = func(**args)
                          except Exception as exc:
                              result = f"Error executing {name}: {exc}"
-                     else:
-                         result = f"Error: Tool {name} not found."
                          
                      function_responses.append(
                          types.Part.from_function_response(
@@ -394,55 +411,28 @@ def chat_with_board(role, message, context):
                          )
                      )
                 
-                # Send back to model
-                # We need to send: User Message -> Model Tool Call -> User Tool Response
-                # This requires constructing the history properly or recursive call.
-                # Let's do a second call with the history.
-                
-                # Construct History for 2nd turn
-                # 1. User Message (full_prompt)
-                # 2. Model Response (response.candidates[0].content) -- The Tool Call
-                # 3. User Response (Function Output)
-                
+                # Second Turn
                 history_contents = [
                     types.Content(role="user", parts=[types.Part.from_text(text=full_prompt)]),
                     response.candidates[0].content,
                     types.Content(role="user", parts=function_responses)
                 ]
                 
-                # Generate Final Answer
                 response2 = client.models.generate_content(
                     model=model_name,
                     contents=history_contents,
                     config=config
-                    # Tools still bound? Maybe optional for final turn, but safer to keep.
                 )
                 return clean_json_output(response2.text)
 
             return clean_json_output(response.text)
 
         except Exception as e:
-            if "gemini-3" in model_name:
-                 # Fallback logic for Error (e.g. 3.0 API issues)
-                 # ... (existing fallback code simplified for brevity, kept structure)
-                 config.system_instruction = FALLBACK_CEO_SYSTEM_PROMPT
-                 # Remove thinking config for 2.5
-                 config = types.GenerateContentConfig(
-                     temperature=0.7,
-                     system_instruction=FALLBACK_CEO_SYSTEM_PROMPT,
-                     thinking_config=types.ThinkingConfig(include_thoughts=True)
-                 )
-                 # Note: Tools might be the cause, but let's strip them for fallback safety
-                 response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=full_prompt,
-                    config=config
-                 )
-                 return clean_json_output(response.text) + " (via Gemini 2.5 Fallback)"
-            raise e
+            # Simple error return
+             return f"**{role} Error:** {e}"
 
     except Exception as e:
-        return f"**{role} is offline:** {e}"
+        return f"**System Error:** {e}"
 
 def run_weekly_review_interview(completed_tasks_context):
     """
@@ -480,17 +470,24 @@ def run_weekly_review_interview(completed_tasks_context):
         }}
         """
 
+        # Thinking Config
+        thinking_level = kernel.get("thinking_level", "MINIMAL") if kernel else "LOW"
+
         config = types.GenerateContentConfig(
              system_instruction=system_prompt,
-             temperature=0.7
+             temperature=0.7,
+             thinking_config=types.ThinkingConfig(
+                include_thoughts=True,
+                thinking_level=thinking_level
+             ),
+             tools=executable_tools if executable_tools else None
         )
         
         # Use simple model for speed? gemini-2.5 is fast enough.
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3-flash-preview',
             contents=user_msg,
-            config=config,
-            tools=executable_tools if executable_tools else None
+            config=config
         )
         return clean_json_output(response.text)
         
@@ -533,6 +530,9 @@ def run_strategic_planning(annual_vision, seasonality_context):
         }}
         """
         
+        # Thinking Config
+        thinking_level = kernel.get("thinking_level", "MINIMAL") if kernel else "HIGH"
+
         response = client.models.generate_content(
             model='gemini-3-flash-preview',
             contents=user_content,
@@ -540,10 +540,11 @@ def run_strategic_planning(annual_vision, seasonality_context):
                 temperature=0.7,
                 system_instruction=system_prompt,
                 thinking_config=types.ThinkingConfig(
-                    include_thoughts=True
-                )
-            ),
-            tools=executable_tools if executable_tools else None
+                    include_thoughts=True,
+                    thinking_level=thinking_level
+                ),
+                tools=executable_tools if executable_tools else None
+            )
         )
         return clean_json_output(response.text)
     except Exception as e:

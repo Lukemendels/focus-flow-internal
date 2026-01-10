@@ -5,7 +5,12 @@ import tools
 # Tool Registry Mapping
 TOOL_REGISTRY = {
     "read_logs": tools.read_recent_logs,
-    "knowledge_search": tools.search_knowledge_base
+    "knowledge_search": tools.search_knowledge_base,
+    "web_search": tools.web_search,
+    "block_calendar_time": tools.block_calendar_time,
+    "update_calendar_event": tools.update_calendar_event,
+    "delete_calendar_event": tools.delete_calendar_event,
+    "calculate_metrics": tools.calculate_metrics
 }
 
 # Cache the kernel data to avoid hitting the DB on every run

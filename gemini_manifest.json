@@ -18,7 +18,11 @@
         "thinking": {
           "supported": true,
           "parameter": "thinking_level",
-          "valid_values": ["LOW", "MEDIUM", "HIGH"],
+          "valid_values": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ],
           "default": "HIGH"
         }
       }
